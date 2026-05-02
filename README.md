@@ -66,9 +66,7 @@ frontends:
     flow_timeout: 5s
     options:
       name: "My Valheim Server"
-      map: "Dedicated"
       version: "0.221.12"
-      max_players: 10
       password: true
 ```
 
@@ -92,8 +90,6 @@ The `status` frontend answers these Steam query packets:
 Options:
 
 - `name`: Required server name shown to query clients.
-- `map`: Required map/world label.
-- `version`: Required version string.
-- `max_players`: Required maximum player count.
+- `version`: Required Valheim game version used in the server keywords.
 - `password`: Whether to report the server as password-protected. Defaults to `true`.
 - `vac`: Whether to report VAC as enabled. Defaults to `false`.

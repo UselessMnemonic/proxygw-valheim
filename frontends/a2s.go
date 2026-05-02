@@ -20,6 +20,7 @@ const (
 	a2sInfoRequest    = "\xff\xff\xff\xffTSource Engine Query\x00"
 	a2sDefaultAppID   = 0
 	a2sDefaultGameID  = 892970
+	a2sDefaultSteamID = 0x0140000000000000
 	a2sChallenge      = 0x70726f78
 	a2sEDFGameID      = 0x01
 	a2sEDFSteamID     = 0x10
@@ -65,6 +66,8 @@ type a2sInfo struct {
 	SteamID    uint64
 	GameID     uint64
 }
+
+const a2sInfoVersion = "1.0.0.0"
 
 func (h *A2SHandler) Start() error {
 	if h.closed {
@@ -295,32 +298,25 @@ func newA2SInfo(address netip.AddrPort, options map[string]any) (a2sInfo, error)
 	if err != nil {
 		return a2sInfo{}, err
 	}
-	mapName, err := requiredStringOption(options, "map")
-	if err != nil {
-		return a2sInfo{}, err
-	}
-	version, err := requiredStringOption(options, "version")
-	if err != nil {
-		return a2sInfo{}, err
-	}
-	maxPlayers, err := requiredUint8Option(options, "max_players")
+	gameVersion, err := requiredStringOption(options, "version")
 	if err != nil {
 		return a2sInfo{}, err
 	}
 
 	info := a2sInfo{
 		Name:       name,
-		Map:        mapName,
+		Map:        name,
 		Folder:     "valheim",
 		Game:       "",
 		AppID:      a2sDefaultAppID,
-		MaxPlayers: maxPlayers,
+		MaxPlayers: 10,
 		Password:   true,
-		Version:    version,
+		Version:    a2sInfoVersion,
 		Port:       defaultGamePort(address),
+		SteamID:    a2sDefaultSteamID,
 		GameID:     a2sDefaultGameID,
 	}
-	info.Keywords = defaultKeywords(info.Version, info.MaxPlayers)
+	info.Keywords = defaultKeywords(gameVersion)
 
 	if info.Password, err = boolOption(options, "password", false); err != nil {
 		return info, err
@@ -339,21 +335,8 @@ func requiredStringOption(options map[string]any, key string) (string, error) {
 	return value, nil
 }
 
-func requiredUint8Option(options map[string]any, key string) (uint8, error) {
-	value, ok := options[key]
-	if !ok {
-		return 0, fmt.Errorf("valheim status frontend option %s is required", key)
-	}
-
-	n, ok := intOption(value)
-	if !ok || n < 0 || n > 255 {
-		return 0, fmt.Errorf("valheim status frontend option %s must be an integer from 0 to 255", key)
-	}
-	return uint8(n), nil
-}
-
-func defaultKeywords(version string, maxPlayers uint8) string {
-	return fmt.Sprintf("g=%s,n=0,m=%d", version, maxPlayers)
+func defaultKeywords(gameVersion string) string {
+	return fmt.Sprintf("g=%s,n=36,m=", gameVersion)
 }
 
 func boolOption(options map[string]any, key string, fallback bool) (bool, error) {
@@ -366,39 +349,6 @@ func boolOption(options map[string]any, key string, fallback bool) (bool, error)
 		return fallback, fmt.Errorf("valheim status frontend option %s must be a boolean", key)
 	}
 	return typed, nil
-}
-
-func intOption(value any) (int64, bool) {
-	switch typed := value.(type) {
-	case int:
-		return int64(typed), true
-	case int8:
-		return int64(typed), true
-	case int16:
-		return int64(typed), true
-	case int32:
-		return int64(typed), true
-	case int64:
-		return typed, true
-	case uint:
-		if uint64(typed) > 1<<63-1 {
-			return 0, false
-		}
-		return int64(typed), true
-	case uint8:
-		return int64(typed), true
-	case uint16:
-		return int64(typed), true
-	case uint32:
-		return int64(typed), true
-	case uint64:
-		if typed > 1<<63-1 {
-			return 0, false
-		}
-		return int64(typed), true
-	default:
-		return 0, false
-	}
 }
 
 // NewA2SHandler creates a Valheim Steam query frontend. It answers A2S probes
