@@ -20,9 +20,12 @@ func TestA2SInfoResponse(t *testing.T) {
 	}
 
 	a2s := handler.(*A2SHandler)
-	response, ok := a2s.response([]byte(a2sInfoRequest))
+	response, query, ok := a2s.response([]byte(a2sInfoRequest))
 	if !ok {
 		t.Fatal("response() did not recognize A2S_INFO")
+	}
+	if query != a2sQueryInfo {
+		t.Fatalf("response() query = %q, want %q", query, a2sQueryInfo)
 	}
 
 	if !bytes.HasPrefix(response, []byte(a2sHeader+"I\x11Frost Hall\x00Mistlands\x00valheim\x00Valheim\x00")) {
@@ -42,9 +45,12 @@ func TestA2SChallengeResponse(t *testing.T) {
 		t.Fatalf("NewA2SHandler() error = %v", err)
 	}
 
-	response, ok := handler.(*A2SHandler).response([]byte(a2sHeader + "V\xff\xff\xff\xff"))
+	response, query, ok := handler.(*A2SHandler).response([]byte(a2sHeader + "V\xff\xff\xff\xff"))
 	if !ok {
 		t.Fatal("response() did not recognize A2S_RULES")
+	}
+	if query != a2sQueryRules {
+		t.Fatalf("response() query = %q, want %q", query, a2sQueryRules)
 	}
 	if !bytes.HasPrefix(response, []byte(a2sHeader+"A")) {
 		t.Fatalf("response() = % x", response)

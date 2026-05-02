@@ -22,6 +22,16 @@ const (
 	a2sChallenge      = 0x70726f78
 )
 
+type a2sQuery string
+
+const (
+	a2sQueryInfo      a2sQuery = "a2s_info"
+	a2sQueryPlayer    a2sQuery = "a2s_player"
+	a2sQueryRules     a2sQuery = "a2s_rules"
+	a2sQueryChallenge a2sQuery = "a2s_challenge"
+	a2sQueryPing      a2sQuery = "a2a_ping"
+)
+
 type A2SHandler struct {
 	address netip.AddrPort
 	info    a2sInfo
@@ -120,37 +130,48 @@ func (h *A2SHandler) serve(conn *net.UDPConn) error {
 			return err
 		}
 
-		response, ok := h.response(buf[:n])
+		response, query, ok := h.response(buf[:n])
 		if !ok {
 			h.logger.Debug("non-a2s packet ignored", "remote", addr.String(), "bytes", n)
 			continue
 		}
 
 		if _, err := conn.WriteToUDPAddrPort(response, addr); err != nil {
-			h.logger.Debug("a2s response failed", "remote", addr.String(), "err", err)
+			h.logger.Debug("a2s response failed", "remote", addr.String(), "query", string(query), "err", err)
 			continue
 		}
-		h.logger.Debug("a2s response sent", "remote", addr.String(), "bytes", len(response))
+		h.logger.Debug("a2s response sent", "remote", addr.String(), "query", string(query), "bytes_in", n, "bytes_out", len(response))
 	}
 }
 
-func (h *A2SHandler) response(packet []byte) ([]byte, bool) {
+func (h *A2SHandler) response(packet []byte) ([]byte, a2sQuery, bool) {
 	if len(packet) < len(a2sHeader)+1 || !bytes.HasPrefix(packet, []byte(a2sHeader)) {
-		return nil, false
+		return nil, "", false
 	}
 
 	switch packet[len(a2sHeader)] {
 	case 'T':
 		if !bytes.HasPrefix(packet, []byte(a2sInfoRequest)) {
-			return nil, false
+			h.logger.Debug("a2s info query ignored", "reason", "bad_payload", "bytes", len(packet))
+			return nil, "", false
 		}
-		return h.info.response(), true
-	case 'U', 'V', 'W':
-		return a2sChallengeResponse(), true
+		h.logger.Debug("a2s info query received", "bytes", len(packet))
+		return h.info.response(), a2sQueryInfo, true
+	case 'U':
+		h.logger.Debug("a2s player query received", "bytes", len(packet))
+		return a2sChallengeResponse(), a2sQueryPlayer, true
+	case 'V':
+		h.logger.Debug("a2s rules query received", "bytes", len(packet))
+		return a2sChallengeResponse(), a2sQueryRules, true
+	case 'W':
+		h.logger.Debug("a2s challenge query received", "bytes", len(packet))
+		return a2sChallengeResponse(), a2sQueryChallenge, true
 	case 'i':
-		return []byte(a2sHeader + "j00000000000000\x00"), true
+		h.logger.Debug("a2a ping query received", "bytes", len(packet))
+		return []byte(a2sHeader + "j00000000000000\x00"), a2sQueryPing, true
 	default:
-		return nil, false
+		h.logger.Debug("a2s packet ignored", "reason", "unknown_query", "query_byte", packet[len(a2sHeader)], "bytes", len(packet))
+		return nil, "", false
 	}
 }
 
