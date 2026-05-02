@@ -18,8 +18,13 @@ const (
 	a2sReadBufferSize = 1400
 	a2sHeader         = "\xff\xff\xff\xff"
 	a2sInfoRequest    = "\xff\xff\xff\xffTSource Engine Query\x00"
-	a2sDefaultAppID   = 41002 // Steam AppID 892970 truncated to the A2S uint16 field.
+	a2sDefaultAppID   = 0
+	a2sDefaultGameID  = 892970
 	a2sChallenge      = 0x70726f78
+	a2sEDFGameID      = 0x01
+	a2sEDFSteamID     = 0x10
+	a2sEDFKeywords    = 0x20
+	a2sEDFPort        = 0x80
 )
 
 type a2sQuery string
@@ -55,6 +60,10 @@ type a2sInfo struct {
 	Password   bool
 	VAC        bool
 	Version    string
+	Port       uint16
+	Keywords   string
+	SteamID    uint64
+	GameID     uint64
 }
 
 func (h *A2SHandler) Start() error {
@@ -155,14 +164,26 @@ func (h *A2SHandler) response(packet []byte) ([]byte, a2sQuery, bool) {
 			h.logger.Debug("a2s info query ignored", "reason", "bad_payload", "bytes", len(packet))
 			return nil, "", false
 		}
+		if !a2sInfoHasChallenge(packet) {
+			h.logger.Debug("a2s info query challenged", "bytes", len(packet))
+			return a2sChallengeResponse(), a2sQueryInfo, true
+		}
 		h.logger.Debug("a2s info query received", "bytes", len(packet))
 		return h.info.response(), a2sQueryInfo, true
 	case 'U':
+		if !a2sHasChallenge(packet) {
+			h.logger.Debug("a2s player query challenged", "bytes", len(packet))
+			return a2sChallengeResponse(), a2sQueryPlayer, true
+		}
 		h.logger.Debug("a2s player query received", "bytes", len(packet))
-		return a2sChallengeResponse(), a2sQueryPlayer, true
+		return a2sPlayerResponse(), a2sQueryPlayer, true
 	case 'V':
+		if !a2sHasChallenge(packet) {
+			h.logger.Debug("a2s rules query challenged", "bytes", len(packet))
+			return a2sChallengeResponse(), a2sQueryRules, true
+		}
 		h.logger.Debug("a2s rules query received", "bytes", len(packet))
-		return a2sChallengeResponse(), a2sQueryRules, true
+		return a2sRulesResponse(), a2sQueryRules, true
 	case 'W':
 		h.logger.Debug("a2s challenge query received", "bytes", len(packet))
 		return a2sChallengeResponse(), a2sQueryChallenge, true
@@ -193,7 +214,11 @@ func (i a2sInfo) response() []byte {
 	writeA2SBool(&b, i.Password)
 	writeA2SBool(&b, i.VAC)
 	writeA2SString(&b, i.Version)
-	b.WriteByte(0)
+	b.WriteByte(a2sEDFPort | a2sEDFSteamID | a2sEDFKeywords | a2sEDFGameID)
+	_ = binary.Write(&b, binary.LittleEndian, i.Port)
+	_ = binary.Write(&b, binary.LittleEndian, i.SteamID)
+	writeA2SString(&b, i.Keywords)
+	_ = binary.Write(&b, binary.LittleEndian, i.GameID)
 	return b.Bytes()
 }
 
@@ -203,6 +228,36 @@ func a2sChallengeResponse() []byte {
 	b.WriteByte('A')
 	_ = binary.Write(&b, binary.LittleEndian, int32(a2sChallenge))
 	return b.Bytes()
+}
+
+func a2sPlayerResponse() []byte {
+	var b bytes.Buffer
+	b.WriteString(a2sHeader)
+	b.WriteByte('D')
+	b.WriteByte(0)
+	return b.Bytes()
+}
+
+func a2sRulesResponse() []byte {
+	var b bytes.Buffer
+	b.WriteString(a2sHeader)
+	b.WriteByte('E')
+	_ = binary.Write(&b, binary.LittleEndian, uint16(0))
+	return b.Bytes()
+}
+
+func a2sHasChallenge(packet []byte) bool {
+	if len(packet) < len(a2sHeader)+5 {
+		return false
+	}
+	return binary.LittleEndian.Uint32(packet[len(a2sHeader)+1:]) == uint32(a2sChallenge)
+}
+
+func a2sInfoHasChallenge(packet []byte) bool {
+	if len(packet) < len(a2sInfoRequest)+4 {
+		return false
+	}
+	return binary.LittleEndian.Uint32(packet[len(a2sInfoRequest):]) == uint32(a2sChallenge)
 }
 
 func writeA2SString(b *bytes.Buffer, value string) {
@@ -228,7 +283,14 @@ func a2sEnvironment() byte {
 	return 'l'
 }
 
-func newA2SInfo(options map[string]any) (a2sInfo, error) {
+func defaultGamePort(address netip.AddrPort) uint16 {
+	if address.Port() == 0 {
+		return 0
+	}
+	return address.Port() - 1
+}
+
+func newA2SInfo(address netip.AddrPort, options map[string]any) (a2sInfo, error) {
 	name, err := requiredStringOption(options, "name")
 	if err != nil {
 		return a2sInfo{}, err
@@ -242,13 +304,26 @@ func newA2SInfo(options map[string]any) (a2sInfo, error) {
 		Name:       name,
 		Map:        mapName,
 		Folder:     stringOption(options, "folder", "valheim"),
-		Game:       stringOption(options, "game", "Valheim"),
+		Game:       stringOption(options, "game", ""),
 		AppID:      a2sDefaultAppID,
 		MaxPlayers: 10,
-		Version:    stringOption(options, "version", ""),
+		Password:   true,
+		Version:    stringOption(options, "version", "1.0.0.0"),
+		Port:       defaultGamePort(address),
+		Keywords:   stringOption(options, "keywords", "g=0.221.12,n=0,m="),
+		GameID:     a2sDefaultGameID,
 	}
 
 	if info.AppID, err = uint16Option(options, "app_id", info.AppID); err != nil {
+		return info, err
+	}
+	if info.GameID, err = uint64Option(options, "game_id", info.GameID); err != nil {
+		return info, err
+	}
+	if info.Port, err = uint16Option(options, "port", info.Port); err != nil {
+		return info, err
+	}
+	if info.SteamID, err = uint64Option(options, "steam_id", info.SteamID); err != nil {
 		return info, err
 	}
 	if info.Players, err = uint8Option(options, "players", info.Players); err != nil {
@@ -323,6 +398,19 @@ func uint16Option(options map[string]any, key string, fallback uint16) (uint16, 
 	return uint16(n), nil
 }
 
+func uint64Option(options map[string]any, key string, fallback uint64) (uint64, error) {
+	value, ok := options[key]
+	if !ok {
+		return fallback, nil
+	}
+
+	n, ok := intOption(value)
+	if !ok || n < 0 {
+		return fallback, fmt.Errorf("valheim status frontend option %s must be a non-negative integer", key)
+	}
+	return uint64(n), nil
+}
+
 func intOption(value any) (int64, bool) {
 	switch typed := value.(type) {
 	case int:
@@ -364,7 +452,7 @@ func NewA2SHandler(name string, protocol config.Protocol, address netip.AddrPort
 		return nil, fmt.Errorf("valheim status frontend requires udp protocol")
 	}
 
-	info, err := newA2SInfo(options)
+	info, err := newA2SInfo(address, options)
 	if err != nil {
 		return nil, err
 	}
