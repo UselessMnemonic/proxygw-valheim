@@ -55,14 +55,14 @@ frontends:
     kind: valheim:server
     target: real-server
     protocol: udp
-    listen: [::]:2456
+    listen: 0.0.0.0:2456
     flow_timeout: 30s
 
   - name: status-frontend
     kind: valheim:status
     target: real-server
     protocol: udp
-    listen: [::]:2457
+    listen: 0.0.0.0:2457
     flow_timeout: 5s
     options:
       name: "My Valheim Server"
@@ -95,6 +95,5 @@ Options:
 - `map`: Required map/world label.
 - `version`: Required version string.
 - `max_players`: Required maximum player count.
-- `password`: Whether to report the server as password-protected. Defaults to
-  `true`.
+- `password`: Whether to report the server as password-protected. Defaults to `true`.
 - `vac`: Whether to report VAC as enabled. Defaults to `false`.
