@@ -2,45 +2,28 @@ package frontends
 
 import (
 	"bytes"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/netip"
-	"runtime"
 
+	"github.com/UselessMnemonic/proxygw-valheim/a2s"
 	"github.com/UselessMnemonic/proxygw/pkg/config"
 	"github.com/UselessMnemonic/proxygw/pkg/frontend"
 )
 
 const (
-	a2sReadBufferSize = 1400
-	a2sHeader         = "\xff\xff\xff\xff"
-	a2sInfoRequest    = "\xff\xff\xff\xffTSource Engine Query\x00"
-	a2sDefaultAppID   = 0
-	a2sDefaultGameID  = 892970
-	a2sDefaultSteamID = 0x0140000000000000
-	a2sChallenge      = 0x70726f78
-	a2sEDFGameID      = 0x01
-	a2sEDFSteamID     = 0x10
-	a2sEDFKeywords    = 0x20
-	a2sEDFPort        = 0x80
+	a2sValheimAppID     = 0
+	a2sValheimGameID    = 892970
+	a2sDefaultChallenge = 0x70786777 // pxgw
 )
 
-type a2sQuery string
-
-const (
-	a2sQueryInfo      a2sQuery = "a2s_info"
-	a2sQueryPlayer    a2sQuery = "a2s_player"
-	a2sQueryRules     a2sQuery = "a2s_rules"
-	a2sQueryChallenge a2sQuery = "a2s_challenge"
-	a2sQueryPing      a2sQuery = "a2a_ping"
-)
+var a2sDefaultSteamID = a2s.SteamID(a2s.UniversePublic, a2s.AccountTypeAnonGameServer, 0, 0)
 
 type A2SHandler struct {
 	address netip.AddrPort
-	info    a2sInfo
+	info    a2s.Info
 	logger  *slog.Logger
 	warm    chan struct{}
 
@@ -48,26 +31,6 @@ type A2SHandler struct {
 	done   chan error
 	closed bool
 }
-
-type a2sInfo struct {
-	Name       string
-	Map        string
-	Folder     string
-	Game       string
-	AppID      uint16
-	Players    uint8
-	MaxPlayers uint8
-	Bots       uint8
-	Password   bool
-	VAC        bool
-	Version    string
-	Port       uint16
-	Keywords   string
-	SteamID    uint64
-	GameID     uint64
-}
-
-const a2sInfoVersion = "1.0.0.0"
 
 func (h *A2SHandler) Start() error {
 	if h.closed {
@@ -132,7 +95,7 @@ func (h *A2SHandler) ShouldWarm() <-chan struct{} {
 }
 
 func (h *A2SHandler) serve(conn *net.UDPConn) error {
-	buf := make([]byte, a2sReadBufferSize)
+	buf := make([]byte, a2s.ReadBufferSize)
 	for {
 		n, addr, err := conn.ReadFromUDPAddrPort(buf)
 		if err != nil {
@@ -156,134 +119,48 @@ func (h *A2SHandler) serve(conn *net.UDPConn) error {
 	}
 }
 
-func (h *A2SHandler) response(packet []byte) ([]byte, a2sQuery, bool) {
-	if len(packet) < len(a2sHeader)+1 || !bytes.HasPrefix(packet, []byte(a2sHeader)) {
+func (h *A2SHandler) response(packet []byte) ([]byte, a2s.Query, bool) {
+	if len(packet) < len(a2s.Header)+1 || !bytes.HasPrefix(packet, []byte(a2s.Header)) {
 		return nil, "", false
 	}
 
-	switch packet[len(a2sHeader)] {
+	switch packet[len(a2s.Header)] {
 	case 'T':
-		if !bytes.HasPrefix(packet, []byte(a2sInfoRequest)) {
+		if !bytes.HasPrefix(packet, []byte(a2s.InfoRequest)) {
 			h.logger.Debug("a2s info query ignored", "reason", "bad_payload", "bytes", len(packet))
 			return nil, "", false
 		}
-		if !a2sInfoHasChallenge(packet) {
+		if !a2s.InfoHasChallenge(packet, a2sDefaultChallenge) {
 			h.logger.Debug("a2s info query challenged", "bytes", len(packet))
-			return a2sChallengeResponse(), a2sQueryInfo, true
+			return a2s.ChallengeResponse(a2sDefaultChallenge), a2s.QueryInfo, true
 		}
 		h.logger.Debug("a2s info query received", "bytes", len(packet))
-		return h.info.response(), a2sQueryInfo, true
+		response, _ := h.info.MarshalBinary()
+		return response, a2s.QueryInfo, true
 	case 'U':
-		if !a2sHasChallenge(packet) {
+		if !a2s.HasChallenge(packet, a2sDefaultChallenge) {
 			h.logger.Debug("a2s player query challenged", "bytes", len(packet))
-			return a2sChallengeResponse(), a2sQueryPlayer, true
+			return a2s.ChallengeResponse(a2sDefaultChallenge), a2s.QueryPlayer, true
 		}
 		h.logger.Debug("a2s player query received", "bytes", len(packet))
-		return a2sPlayerResponse(), a2sQueryPlayer, true
+		return a2s.PlayerResponse(), a2s.QueryPlayer, true
 	case 'V':
-		if !a2sHasChallenge(packet) {
+		if !a2s.HasChallenge(packet, a2sDefaultChallenge) {
 			h.logger.Debug("a2s rules query challenged", "bytes", len(packet))
-			return a2sChallengeResponse(), a2sQueryRules, true
+			return a2s.ChallengeResponse(a2sDefaultChallenge), a2s.QueryRules, true
 		}
 		h.logger.Debug("a2s rules query received", "bytes", len(packet))
-		return a2sRulesResponse(), a2sQueryRules, true
+		return a2s.RulesResponse(), a2s.QueryRules, true
 	case 'W':
 		h.logger.Debug("a2s challenge query received", "bytes", len(packet))
-		return a2sChallengeResponse(), a2sQueryChallenge, true
+		return a2s.ChallengeResponse(a2sDefaultChallenge), a2s.QueryChallenge, true
 	case 'i':
 		h.logger.Debug("a2a ping query received", "bytes", len(packet))
-		return []byte(a2sHeader + "j00000000000000\x00"), a2sQueryPing, true
+		return a2s.PingResponse(), a2s.QueryPing, true
 	default:
-		h.logger.Debug("a2s packet ignored", "reason", "unknown_query", "query_byte", packet[len(a2sHeader)], "bytes", len(packet))
+		h.logger.Debug("a2s packet ignored", "reason", "unknown_query", "query_byte", packet[len(a2s.Header)], "bytes", len(packet))
 		return nil, "", false
 	}
-}
-
-func (i a2sInfo) response() []byte {
-	var b bytes.Buffer
-	b.WriteString(a2sHeader)
-	b.WriteByte('I')
-	b.WriteByte(17)
-	writeA2SString(&b, i.Name)
-	writeA2SString(&b, i.Map)
-	writeA2SString(&b, i.Folder)
-	writeA2SString(&b, i.Game)
-	_ = binary.Write(&b, binary.LittleEndian, i.AppID)
-	b.WriteByte(i.Players)
-	b.WriteByte(i.MaxPlayers)
-	b.WriteByte(i.Bots) // bots
-	b.WriteByte('d')
-	b.WriteByte(a2sEnvironment())
-	writeA2SBool(&b, i.Password)
-	writeA2SBool(&b, i.VAC)
-	writeA2SString(&b, i.Version)
-	b.WriteByte(a2sEDFPort | a2sEDFSteamID | a2sEDFKeywords | a2sEDFGameID)
-	_ = binary.Write(&b, binary.LittleEndian, i.Port)
-	_ = binary.Write(&b, binary.LittleEndian, i.SteamID)
-	writeA2SString(&b, i.Keywords)
-	_ = binary.Write(&b, binary.LittleEndian, i.GameID)
-	return b.Bytes()
-}
-
-func a2sChallengeResponse() []byte {
-	var b bytes.Buffer
-	b.WriteString(a2sHeader)
-	b.WriteByte('A')
-	_ = binary.Write(&b, binary.LittleEndian, int32(a2sChallenge))
-	return b.Bytes()
-}
-
-func a2sPlayerResponse() []byte {
-	var b bytes.Buffer
-	b.WriteString(a2sHeader)
-	b.WriteByte('D')
-	b.WriteByte(0)
-	return b.Bytes()
-}
-
-func a2sRulesResponse() []byte {
-	var b bytes.Buffer
-	b.WriteString(a2sHeader)
-	b.WriteByte('E')
-	_ = binary.Write(&b, binary.LittleEndian, uint16(0))
-	return b.Bytes()
-}
-
-func a2sHasChallenge(packet []byte) bool {
-	if len(packet) < len(a2sHeader)+5 {
-		return false
-	}
-	return binary.LittleEndian.Uint32(packet[len(a2sHeader)+1:]) == uint32(a2sChallenge)
-}
-
-func a2sInfoHasChallenge(packet []byte) bool {
-	if len(packet) < len(a2sInfoRequest)+4 {
-		return false
-	}
-	return binary.LittleEndian.Uint32(packet[len(a2sInfoRequest):]) == uint32(a2sChallenge)
-}
-
-func writeA2SString(b *bytes.Buffer, value string) {
-	b.WriteString(value)
-	b.WriteByte(0)
-}
-
-func writeA2SBool(b *bytes.Buffer, value bool) {
-	if value {
-		b.WriteByte(1)
-		return
-	}
-	b.WriteByte(0)
-}
-
-func a2sEnvironment() byte {
-	if runtime.GOOS == "windows" {
-		return 'w'
-	}
-	if runtime.GOOS == "darwin" {
-		return 'm'
-	}
-	return 'l'
 }
 
 func defaultGamePort(address netip.AddrPort) uint16 {
@@ -293,36 +170,50 @@ func defaultGamePort(address netip.AddrPort) uint16 {
 	return address.Port() - 1
 }
 
-func newA2SInfo(address netip.AddrPort, options map[string]any) (a2sInfo, error) {
+func newA2SInfo(address netip.AddrPort, options map[string]any) (a2s.Info, error) {
 	name, err := requiredStringOption(options, "name")
 	if err != nil {
-		return a2sInfo{}, err
+		return a2s.Info{}, err
 	}
 	gameVersion, err := requiredStringOption(options, "version")
 	if err != nil {
-		return a2sInfo{}, err
+		return a2s.Info{}, err
 	}
 
-	info := a2sInfo{
-		Name:       name,
-		Map:        name,
-		Folder:     "valheim",
-		Game:       "",
-		AppID:      a2sDefaultAppID,
-		MaxPlayers: 10,
-		Password:   true,
-		Version:    a2sInfoVersion,
-		Port:       defaultGamePort(address),
-		SteamID:    a2sDefaultSteamID,
-		GameID:     a2sDefaultGameID,
+	info := a2s.Info{
+		Name:        name,
+		Map:         name,
+		Folder:      "valheim",
+		Game:        "",
+		AppID:       a2sValheimAppID,
+		MaxPlayers:  10,
+		ServerType:  a2s.ServerTypeDedicated,
+		Environment: a2s.EnvironmentLinux,
+		Visibility:  a2s.VisibilityPrivate,
+		Version:     a2s.InfoVersion,
+		EDF:         a2s.EDFPort | a2s.EDFSteamID | a2s.EDFKeywords | a2s.EDFGameID,
+		Port:        defaultGamePort(address),
+		SteamID:     a2sDefaultSteamID,
+		GameID:      a2sValheimGameID,
 	}
 	info.Keywords = defaultKeywords(gameVersion)
 
-	if info.Password, err = boolOption(options, "password", false); err != nil {
+	password, err := boolOption(options, "password", true)
+	if err != nil {
 		return info, err
 	}
-	if info.VAC, err = boolOption(options, "vac", false); err != nil {
+	info.Visibility = a2s.VisibilityPublic
+	if password {
+		info.Visibility = a2s.VisibilityPrivate
+	}
+
+	vac, err := boolOption(options, "vac", false)
+	if err != nil {
 		return info, err
+	}
+	info.VAC = a2s.VACUnsecured
+	if vac {
+		info.VAC = a2s.VACSecured
 	}
 	return info, nil
 }

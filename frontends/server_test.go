@@ -1,6 +1,10 @@
 package frontends
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/UselessMnemonic/proxygw-valheim/a2s"
+)
 
 func TestLooksLikeValheimGameplay(t *testing.T) {
 	tests := []struct {
@@ -20,7 +24,7 @@ func TestLooksLikeValheimGameplay(t *testing.T) {
 		},
 		{
 			name:   "a2s info on wrong port",
-			packet: []byte(a2sInfoRequest),
+			packet: []byte(a2s.InfoRequest),
 			want:   false,
 		},
 		{
