@@ -208,7 +208,7 @@ func (i a2sInfo) response() []byte {
 	_ = binary.Write(&b, binary.LittleEndian, i.AppID)
 	b.WriteByte(i.Players)
 	b.WriteByte(i.MaxPlayers)
-	b.WriteByte(i.Bots)
+	b.WriteByte(i.Bots) // bots
 	b.WriteByte('d')
 	b.WriteByte(a2sEnvironment())
 	writeA2SBool(&b, i.Password)
@@ -299,42 +299,29 @@ func newA2SInfo(address netip.AddrPort, options map[string]any) (a2sInfo, error)
 	if err != nil {
 		return a2sInfo{}, err
 	}
+	version, err := requiredStringOption(options, "version")
+	if err != nil {
+		return a2sInfo{}, err
+	}
+	maxPlayers, err := requiredUint8Option(options, "max_players")
+	if err != nil {
+		return a2sInfo{}, err
+	}
 
 	info := a2sInfo{
 		Name:       name,
 		Map:        mapName,
-		Folder:     stringOption(options, "folder", "valheim"),
-		Game:       stringOption(options, "game", ""),
+		Folder:     "valheim",
+		Game:       "",
 		AppID:      a2sDefaultAppID,
-		MaxPlayers: 10,
+		MaxPlayers: maxPlayers,
 		Password:   true,
-		Version:    stringOption(options, "version", "1.0.0.0"),
+		Version:    version,
 		Port:       defaultGamePort(address),
-		Keywords:   stringOption(options, "keywords", "g=0.221.12,n=0,m="),
 		GameID:     a2sDefaultGameID,
 	}
+	info.Keywords = defaultKeywords(info.Version, info.MaxPlayers)
 
-	if info.AppID, err = uint16Option(options, "app_id", info.AppID); err != nil {
-		return info, err
-	}
-	if info.GameID, err = uint64Option(options, "game_id", info.GameID); err != nil {
-		return info, err
-	}
-	if info.Port, err = uint16Option(options, "port", info.Port); err != nil {
-		return info, err
-	}
-	if info.SteamID, err = uint64Option(options, "steam_id", info.SteamID); err != nil {
-		return info, err
-	}
-	if info.Players, err = uint8Option(options, "players", info.Players); err != nil {
-		return info, err
-	}
-	if info.MaxPlayers, err = uint8Option(options, "max_players", info.MaxPlayers); err != nil {
-		return info, err
-	}
-	if info.Bots, err = uint8Option(options, "bots", info.Bots); err != nil {
-		return info, err
-	}
 	if info.Password, err = boolOption(options, "password", false); err != nil {
 		return info, err
 	}
@@ -352,12 +339,21 @@ func requiredStringOption(options map[string]any, key string) (string, error) {
 	return value, nil
 }
 
-func stringOption(options map[string]any, key string, fallback string) string {
-	value, ok := options[key].(string)
+func requiredUint8Option(options map[string]any, key string) (uint8, error) {
+	value, ok := options[key]
 	if !ok {
-		return fallback
+		return 0, fmt.Errorf("valheim status frontend option %s is required", key)
 	}
-	return value
+
+	n, ok := intOption(value)
+	if !ok || n < 0 || n > 255 {
+		return 0, fmt.Errorf("valheim status frontend option %s must be an integer from 0 to 255", key)
+	}
+	return uint8(n), nil
+}
+
+func defaultKeywords(version string, maxPlayers uint8) string {
+	return fmt.Sprintf("g=%s,n=0,m=%d", version, maxPlayers)
 }
 
 func boolOption(options map[string]any, key string, fallback bool) (bool, error) {
@@ -370,45 +366,6 @@ func boolOption(options map[string]any, key string, fallback bool) (bool, error)
 		return fallback, fmt.Errorf("valheim status frontend option %s must be a boolean", key)
 	}
 	return typed, nil
-}
-
-func uint8Option(options map[string]any, key string, fallback uint8) (uint8, error) {
-	value, ok := options[key]
-	if !ok {
-		return fallback, nil
-	}
-
-	n, ok := intOption(value)
-	if !ok || n < 0 || n > 255 {
-		return fallback, fmt.Errorf("valheim status frontend option %s must be an integer from 0 to 255", key)
-	}
-	return uint8(n), nil
-}
-
-func uint16Option(options map[string]any, key string, fallback uint16) (uint16, error) {
-	value, ok := options[key]
-	if !ok {
-		return fallback, nil
-	}
-
-	n, ok := intOption(value)
-	if !ok || n < 0 || n > 65535 {
-		return fallback, fmt.Errorf("valheim status frontend option %s must be an integer from 0 to 65535", key)
-	}
-	return uint16(n), nil
-}
-
-func uint64Option(options map[string]any, key string, fallback uint64) (uint64, error) {
-	value, ok := options[key]
-	if !ok {
-		return fallback, nil
-	}
-
-	n, ok := intOption(value)
-	if !ok || n < 0 {
-		return fallback, fmt.Errorf("valheim status frontend option %s must be a non-negative integer", key)
-	}
-	return uint64(n), nil
 }
 
 func intOption(value any) (int64, bool) {

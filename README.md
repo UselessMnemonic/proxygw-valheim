@@ -67,6 +67,7 @@ frontends:
     options:
       name: "My Valheim Server"
       map: "Dedicated"
+      version: "0.221.12"
       max_players: 10
       password: true
 ```
@@ -92,14 +93,8 @@ Options:
 
 - `name`: Required server name shown to query clients.
 - `map`: Required map/world label.
-- `folder`: Game folder. Defaults to `valheim`.
-- `game`: Game name. Defaults to `Valheim`.
-- `app_id`: 16-bit A2S app id field. Defaults to `41002`, the low 16 bits of
-  Valheim's Steam AppID `892970`.
-- `players`: Current player count. Defaults to `0`.
-- `max_players`: Maximum player count. Defaults to `10`.
-- `bots`: Bot count. Defaults to `0`.
+- `version`: Required version string.
+- `max_players`: Required maximum player count.
 - `password`: Whether to report the server as password-protected. Defaults to
-  `false`.
+  `true`.
 - `vac`: Whether to report VAC as enabled. Defaults to `false`.
-- `version`: Version string. Defaults to empty.

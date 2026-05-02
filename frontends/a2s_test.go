@@ -14,6 +14,7 @@ func TestA2SInfoResponse(t *testing.T) {
 		"map":         "Mistlands",
 		"max_players": 10,
 		"password":    true,
+		"version":     "0.0.0",
 	})
 	if err != nil {
 		t.Fatalf("NewA2SHandler() error = %v", err)
@@ -41,7 +42,7 @@ func TestA2SInfoResponse(t *testing.T) {
 	if !bytes.HasPrefix(response, []byte(a2sHeader+"I\x11Frost Hall\x00Mistlands\x00valheim\x00\x00\x00\x00")) {
 		t.Fatalf("response() prefix = % x", response)
 	}
-	if !bytes.HasSuffix(response, []byte{0xb1, 0x98, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 'g', '=', '0', '.', '2', '2', '1', '.', '1', '2', ',', 'n', '=', '0', ',', 'm', '=', 0x00, 0x2a, 0xa0, 0x0d, 0x00, 0x00, 0x00, 0x00, 0x00}) {
+	if !bytes.HasSuffix(response, []byte{0xb1, 0x98, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 'g', '=', '0', '.', '0', '.', '0', ',', 'n', '=', '0', ',', 'm', '=', '1', '0', 0x00, 0x2a, 0xa0, 0x0d, 0x00, 0x00, 0x00, 0x00, 0x00}) {
 		t.Fatalf("response() suffix = % x", response)
 	}
 	if len(a2s.ShouldWarm()) != 0 {
@@ -51,8 +52,10 @@ func TestA2SInfoResponse(t *testing.T) {
 
 func TestA2SChallengeResponse(t *testing.T) {
 	handler, err := NewA2SHandler("test", config.ProtocolUDP, netip.MustParseAddrPort("127.0.0.1:2457"), map[string]any{
-		"name": "Frost Hall",
-		"map":  "Mistlands",
+		"name":        "Frost Hall",
+		"map":         "Mistlands",
+		"max_players": 10,
+		"version":     "0.0.0",
 	})
 	if err != nil {
 		t.Fatalf("NewA2SHandler() error = %v", err)
@@ -72,8 +75,10 @@ func TestA2SChallengeResponse(t *testing.T) {
 
 func TestA2SPlayerAndRulesResponses(t *testing.T) {
 	handler, err := NewA2SHandler("test", config.ProtocolUDP, netip.MustParseAddrPort("127.0.0.1:2457"), map[string]any{
-		"name": "Frost Hall",
-		"map":  "Mistlands",
+		"name":        "Frost Hall",
+		"map":         "Mistlands",
+		"max_players": 10,
+		"version":     "0.0.0",
 	})
 	if err != nil {
 		t.Fatalf("NewA2SHandler() error = %v", err)
@@ -111,26 +116,38 @@ func TestA2SPlayerAndRulesResponses(t *testing.T) {
 	}
 }
 
-func TestA2SRequiresNameAndMap(t *testing.T) {
+func TestA2SRequiresCoreOptions(t *testing.T) {
 	tests := []struct {
 		name    string
 		options map[string]any
 	}{
 		{
 			name:    "missing name",
-			options: map[string]any{"map": "Mistlands"},
+			options: map[string]any{"map": "Mistlands", "max_players": 10, "version": "0.0.0"},
 		},
 		{
 			name:    "missing map",
-			options: map[string]any{"name": "Frost Hall"},
+			options: map[string]any{"name": "Frost Hall", "max_players": 10, "version": "0.0.0"},
+		},
+		{
+			name:    "missing max players",
+			options: map[string]any{"name": "Frost Hall", "map": "Mistlands", "version": "0.0.0"},
+		},
+		{
+			name:    "missing version",
+			options: map[string]any{"name": "Frost Hall", "map": "Mistlands", "max_players": 10},
 		},
 		{
 			name:    "empty name",
-			options: map[string]any{"name": "", "map": "Mistlands"},
+			options: map[string]any{"name": "", "map": "Mistlands", "max_players": 10, "version": "0.0.0"},
 		},
 		{
 			name:    "empty map",
-			options: map[string]any{"name": "Frost Hall", "map": ""},
+			options: map[string]any{"name": "Frost Hall", "map": "", "max_players": 10, "version": "0.0.0"},
+		},
+		{
+			name:    "empty version",
+			options: map[string]any{"name": "Frost Hall", "map": "Mistlands", "max_players": 10, "version": ""},
 		},
 	}
 
@@ -141,5 +158,38 @@ func TestA2SRequiresNameAndMap(t *testing.T) {
 				t.Fatal("NewA2SHandler() error = nil, want error")
 			}
 		})
+	}
+}
+
+func TestA2SKeywordsDefaultFromVersionAndMaxPlayers(t *testing.T) {
+	info, err := newA2SInfo(netip.MustParseAddrPort("127.0.0.1:2457"), map[string]any{
+		"name":        "Frost Hall",
+		"map":         "Mistlands",
+		"version":     "0.222.0",
+		"max_players": 8,
+	})
+	if err != nil {
+		t.Fatalf("newA2SInfo() error = %v", err)
+	}
+
+	if info.Keywords != "g=0.222.0,n=0,m=8" {
+		t.Fatalf("Keywords = %q, want %q", info.Keywords, "g=0.222.0,n=0,m=8")
+	}
+}
+
+func TestA2SIgnoresUnknownOptions(t *testing.T) {
+	info, err := newA2SInfo(netip.MustParseAddrPort("127.0.0.1:2457"), map[string]any{
+		"name":        "Frost Hall",
+		"map":         "Mistlands",
+		"version":     "0.222.0",
+		"max_players": 8,
+		"keywords":    "custom",
+	})
+	if err != nil {
+		t.Fatalf("newA2SInfo() error = %v", err)
+	}
+
+	if info.Keywords != "g=0.222.0,n=0,m=8" {
+		t.Fatalf("Keywords = %q, want %q", info.Keywords, "g=0.222.0,n=0,m=8")
 	}
 }
